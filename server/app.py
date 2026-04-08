@@ -2,25 +2,15 @@
 FastAPI application for the DataOps Environment.
 """
 
-try:
-    from openenv.core.env_server.http_server import create_app
-except Exception as e:
-    raise ImportError(
-        "openenv is required. Install with: pip install openenv-core"
-    ) from e
+import sys
+import os
 
-try:
-    from ..models import DataOpsAction, DataOpsObservation
-    from .dataops_env_environment import DataopsEnvironment
-except (ImportError, ModuleNotFoundError):
-    try:
-        from models import DataOpsAction, DataOpsObservation
-        from server.dataops_env_environment import DataopsEnvironment
-    except (ImportError, ModuleNotFoundError):
-        import sys, os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from models import DataOpsAction, DataOpsObservation
-        from server.dataops_env_environment import DataopsEnvironment
+# Ensure parent directory is in path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from openenv.core.env_server.http_server import create_app
+from models import DataOpsAction, DataOpsObservation
+from server.dataops_env_environment import DataopsEnvironment
 
 
 app = create_app(
@@ -38,8 +28,4 @@ def main(host: str = "0.0.0.0", port: int = 8000):
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-    main(port=args.port)
+    main()
