@@ -28,6 +28,23 @@ from .database import DatabaseManager
 from .grader import GRADERS
 from .tools import TOOLS, TOOL_DESCRIPTIONS
 
+# Reward tiers based on action type
+EXPLORATION_TOOLS = {"list_tables", "describe_table", "list_views", "execute_sql", "explain_query"}
+INVESTIGATION_TOOLS = {"run_quality_check", "get_pipeline_status", "check_access", "list_quality_rules"}
+ACTION_TOOLS = {
+    "create_view", "drop_view", "update_data", "delete_data",
+    "add_quality_rule", "update_quality_rule", "delete_quality_rule",
+    "create_pipeline", "run_pipeline", "revoke_access",
+}
+
+REWARD_EXPLORATION = 0.10
+REWARD_INVESTIGATION = 0.20
+REWARD_ACTION = 0.30
+REWARD_ERROR = -0.15
+REWARD_UNKNOWN_TOOL = -0.20
+REWARD_INTERNAL_ERROR = -0.25
+REWARD_REPEATED_NOOP = 0.02  # almost nothing for repeated identical calls
+
 
 class DataopsEnvironment(Environment):
     """DataOps environment for training AI agents on data operations tasks."""
@@ -40,11 +57,46 @@ class DataopsEnvironment(Environment):
         self._state = DataOpsState(episode_id=str(uuid4()), step_count=0)
         self._task_id = 1
         self._submitted = False
-        # Pre-initialize DB with default task so HTTP mode works
+        self._last_calls = []  # track recent (tool_name, args) for repeat detection
         self.db.create()
         seed_fn = SEED_FUNCTIONS.get(1)
         if seed_fn:
             seed_fn(self.db)
+
+    def _compute_step_reward(self, tool_name: str, arguments: dict, success: bool) -> float:
+        """Compute reward based on action type, success, and context."""
+        if not success:
+            return REWARD_ERROR
+
+        # Check for repeated identical calls (agent spinning in circles)
+        call_sig = (tool_name, str(sorted(arguments.items())))
+        if call_sig in self._last_calls[-3:]:
+            return REWARD_REPEATED_NOOP
+        self._last_calls.append(call_sig)
+
+        # Reward based on action category
+        if tool_name in EXPLORATION_TOOLS:
+            reward = REWARD_EXPLORATION
+        elif tool_name in INVESTIGATION_TOOLS:
+            reward = REWARD_INVESTIGATION
+        elif tool_name in ACTION_TOOLS:
+            reward = REWARD_ACTION
+        else:
+            reward = 0.10
+
+        # Small urgency penalty as steps run out
+        task = TASKS.get(self._task_id, TASKS[1])
+        steps_used_ratio = self._state.step_count / task["max_steps"]
+        if steps_used_ratio > 0.8:
+            reward -= 0.05  # running out of time
+        elif steps_used_ratio > 0.6:
+            reward -= 0.02  # getting there
+
+        return round(reward, 3)
+
+    def _steps_remaining(self) -> int:
+        task = TASKS.get(self._task_id, TASKS[1])
+        return max(0, task["max_steps"] - self._state.step_count)
 
     def reset(
         self,
@@ -79,6 +131,7 @@ class DataopsEnvironment(Environment):
             max_steps=task["max_steps"],
         )
         self._submitted = False
+        self._last_calls = []
 
         self.db.create()
         seed_fn = SEED_FUNCTIONS.get(self._task_id)
@@ -91,6 +144,7 @@ class DataopsEnvironment(Environment):
             tool_name="reset",
             available_tools=list(TOOL_DESCRIPTIONS.keys()),
             task_prompt=task["prompt"],
+            steps_remaining=task["max_steps"],
             done=False,
             reward=0.0,
             metadata={
@@ -114,15 +168,17 @@ class DataopsEnvironment(Environment):
         self._state.tools_called.append(action.tool_name)
 
         task = TASKS.get(self._task_id, TASKS[1])
+        remaining = self._steps_remaining()
 
         # Check if max steps exceeded
         if self._state.step_count > task["max_steps"]:
             grader = GRADERS.get(self._task_id)
-            grade_result = grader(self.db) if grader else {"score": 0.0}
+            grade_result = grader(self.db) if grader else {"score": 0.05}
             return DataOpsObservation(
                 result={"message": "Maximum steps reached. Episode ending.", "grade": grade_result},
                 error=None,
                 tool_name="system",
+                steps_remaining=0,
                 done=True,
                 reward=grade_result["score"],
                 metadata={"reason": "max_steps_exceeded", "grade_details": grade_result},
@@ -135,8 +191,9 @@ class DataopsEnvironment(Environment):
                 result=None,
                 error=f"Unknown tool: '{action.tool_name}'. Available tools: {list(TOOLS.keys())}",
                 tool_name=action.tool_name,
+                steps_remaining=remaining,
                 done=False,
-                reward=-0.2,
+                reward=REWARD_UNKNOWN_TOOL,
                 metadata={"step": self._state.step_count},
             )
 
@@ -148,11 +205,12 @@ class DataopsEnvironment(Environment):
             if action.tool_name == "submit_report":
                 self._submitted = True
                 grader = GRADERS.get(self._task_id)
-                grade_result = grader(self.db) if grader else {"score": 0.0}
+                grade_result = grader(self.db) if grader else {"score": 0.05}
                 return DataOpsObservation(
                     result={"submission": result, "grade": grade_result},
                     error=None,
                     tool_name=action.tool_name,
+                    steps_remaining=remaining,
                     done=True,
                     reward=grade_result["score"],
                     metadata={
@@ -161,14 +219,15 @@ class DataopsEnvironment(Environment):
                     },
                 )
 
-            reward = 0.3 - 0.01
+            reward = self._compute_step_reward(action.tool_name, action.arguments, success=True)
             return DataOpsObservation(
                 result=result,
                 error=None,
                 tool_name=action.tool_name,
+                steps_remaining=remaining,
                 done=False,
-                reward=round(reward, 3),
-                metadata={"step": self._state.step_count},
+                reward=reward,
+                metadata={"step": self._state.step_count, "reward_type": "success"},
             )
 
         except (ValueError, TypeError, KeyError) as e:
@@ -176,18 +235,20 @@ class DataopsEnvironment(Environment):
                 result=None,
                 error=str(e),
                 tool_name=action.tool_name,
+                steps_remaining=remaining,
                 done=False,
-                reward=-0.2,
-                metadata={"step": self._state.step_count},
+                reward=REWARD_ERROR,
+                metadata={"step": self._state.step_count, "reward_type": "tool_error"},
             )
         except Exception as e:
             return DataOpsObservation(
                 result=None,
                 error=f"Internal error: {str(e)}",
                 tool_name=action.tool_name,
+                steps_remaining=remaining,
                 done=False,
-                reward=-0.3,
-                metadata={"step": self._state.step_count},
+                reward=REWARD_INTERNAL_ERROR,
+                metadata={"step": self._state.step_count, "reward_type": "internal_error"},
             )
 
     @property

@@ -21,7 +21,8 @@ TASKS = {
             "Available tools: list_tables, describe_table, list_views, execute_sql, "
             "explain_query, create_view, update_data, delete_data, add_quality_rule, "
             "list_quality_rules, run_quality_check, create_pipeline, run_pipeline, "
-            "get_pipeline_status, check_access, drop_view, revoke_access, submit_report"
+            "get_pipeline_status, check_access, drop_view, revoke_access, "
+            "update_quality_rule, delete_quality_rule, submit_report"
         ),
     },
     2: {
@@ -41,7 +42,8 @@ TASKS = {
             "Available tools: list_tables, describe_table, list_views, execute_sql, "
             "explain_query, create_view, update_data, delete_data, add_quality_rule, "
             "list_quality_rules, run_quality_check, create_pipeline, run_pipeline, "
-            "get_pipeline_status, check_access, drop_view, revoke_access, submit_report"
+            "get_pipeline_status, check_access, drop_view, revoke_access, "
+            "update_quality_rule, delete_quality_rule, submit_report"
         ),
     },
     3: {
@@ -65,7 +67,8 @@ TASKS = {
             "Available tools: list_tables, describe_table, list_views, execute_sql, "
             "explain_query, create_view, update_data, delete_data, add_quality_rule, "
             "list_quality_rules, run_quality_check, create_pipeline, run_pipeline, "
-            "get_pipeline_status, check_access, drop_view, revoke_access, submit_report"
+            "get_pipeline_status, check_access, drop_view, revoke_access, "
+            "update_quality_rule, delete_quality_rule, submit_report"
         ),
     },
 }

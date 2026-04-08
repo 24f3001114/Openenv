@@ -136,6 +136,52 @@ def add_quality_rule(
     return {"status": "success", "rule_id": rule_id, "message": f"Quality rule added: {rule_type} on {table}.{column}"}
 
 
+def update_quality_rule(
+    db: DatabaseManager,
+    rule_id: int,
+    rule_value: str = None,
+    rule_type: str = None,
+    is_active: int = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    existing = db.fetchone("SELECT * FROM quality_rules WHERE rule_id = ?", (rule_id,))
+    if not existing:
+        raise ValueError(f"Quality rule with id {rule_id} not found")
+
+    updates = []
+    params = []
+    if rule_value is not None:
+        updates.append("rule_value = ?")
+        params.append(rule_value)
+    if rule_type is not None:
+        valid_types = ["not_null", "unique", "range", "regex", "custom_sql"]
+        if rule_type not in valid_types:
+            raise ValueError(f"Invalid rule_type. Must be one of: {valid_types}")
+        updates.append("rule_type = ?")
+        params.append(rule_type)
+    if is_active is not None:
+        updates.append("is_active = ?")
+        params.append(is_active)
+
+    if not updates:
+        raise ValueError("No fields to update. Provide rule_value, rule_type, or is_active.")
+
+    params.append(rule_id)
+    db.execute(f"UPDATE quality_rules SET {', '.join(updates)} WHERE rule_id = ?", tuple(params))
+    db.commit()
+    return {"status": "success", "message": f"Quality rule {rule_id} updated"}
+
+
+def delete_quality_rule(db: DatabaseManager, rule_id: int, **kwargs) -> Dict[str, Any]:
+    existing = db.fetchone("SELECT * FROM quality_rules WHERE rule_id = ?", (rule_id,))
+    if not existing:
+        raise ValueError(f"Quality rule with id {rule_id} not found")
+
+    db.execute("DELETE FROM quality_rules WHERE rule_id = ?", (rule_id,))
+    db.commit()
+    return {"status": "success", "message": f"Quality rule {rule_id} deleted"}
+
+
 def list_quality_rules(db: DatabaseManager, **kwargs) -> Dict[str, Any]:
     rules = db.fetchall("SELECT * FROM quality_rules WHERE is_active = 1 ORDER BY rule_id")
     return {"rules": rules, "count": len(rules)}
@@ -374,6 +420,8 @@ TOOLS = {
     "update_data": update_data,
     "delete_data": delete_data,
     "add_quality_rule": add_quality_rule,
+    "update_quality_rule": update_quality_rule,
+    "delete_quality_rule": delete_quality_rule,
     "list_quality_rules": list_quality_rules,
     "run_quality_check": run_quality_check,
     "create_pipeline": create_pipeline,
@@ -395,6 +443,8 @@ TOOL_DESCRIPTIONS = {
     "update_data": "Update rows in a table. Args: table, set_clause, where_clause",
     "delete_data": "Delete rows from a table. Args: table, where_clause",
     "add_quality_rule": "Add a data quality rule. Args: table, column, rule_type (not_null|unique|range|regex|custom_sql), rule_value",
+    "update_quality_rule": "Update an existing quality rule. Args: rule_id, rule_value (optional), rule_type (optional), is_active (optional, 0 or 1)",
+    "delete_quality_rule": "Delete a quality rule. Args: rule_id",
     "list_quality_rules": "List all active quality rules",
     "run_quality_check": "Run quality checks on a table. Args: table",
     "create_pipeline": "Create or update an ETL pipeline. Args: name, source, dest, transform_sql",

@@ -81,6 +81,8 @@ Available tools and their arguments:
 - delete_data(table, where_clause) — Delete rows
 - add_quality_rule(table, column, rule_type, rule_value) — Add data quality rule
   rule_type must be: not_null, unique, range, regex, or custom_sql
+- update_quality_rule(rule_id, rule_value, rule_type, is_active) — Update a quality rule
+- delete_quality_rule(rule_id) — Delete a quality rule
 - list_quality_rules() — List active quality rules
 - run_quality_check(table) — Run quality checks
 - create_pipeline(name, source, dest, transform_sql) — Create/update ETL pipeline
