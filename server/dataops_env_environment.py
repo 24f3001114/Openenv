@@ -37,13 +37,10 @@ ACTION_TOOLS = {
     "create_pipeline", "run_pipeline", "revoke_access",
 }
 
-REWARD_EXPLORATION = 0.10
-REWARD_INVESTIGATION = 0.20
-REWARD_ACTION = 0.30
-REWARD_ERROR = -0.15
-REWARD_UNKNOWN_TOOL = -0.20
-REWARD_INTERNAL_ERROR = -0.25
-REWARD_REPEATED_NOOP = 0.02  # almost nothing for repeated identical calls
+
+def _clamp_score(score: float) -> float:
+    """Clamp score strictly between 0 and 1. Never 0.0, never 1.0."""
+    return max(0.01, min(0.99, score))
 
 
 class DataopsEnvironment(Environment):
@@ -57,42 +54,27 @@ class DataopsEnvironment(Environment):
         self._state = DataOpsState(episode_id=str(uuid4()), step_count=0)
         self._task_id = 1
         self._submitted = False
-        self._last_calls = []  # track recent (tool_name, args) for repeat detection
+        self._last_calls = []
+        # Pre-initialize DB with default task so HTTP mode works
         self.db.create()
         seed_fn = SEED_FUNCTIONS.get(1)
         if seed_fn:
             seed_fn(self.db)
 
-    def _compute_step_reward(self, tool_name: str, arguments: dict, success: bool) -> float:
-        """Compute reward based on action type, success, and context."""
-        if not success:
-            return REWARD_ERROR
-
-        # Check for repeated identical calls (agent spinning in circles)
+    def _compute_step_reward(self, tool_name: str, arguments: dict) -> float:
+        """Compute reward based on action type."""
         call_sig = (tool_name, str(sorted(arguments.items())))
         if call_sig in self._last_calls[-3:]:
-            return REWARD_REPEATED_NOOP
+            return 0.02  # repeated call
         self._last_calls.append(call_sig)
 
-        # Reward based on action category
         if tool_name in EXPLORATION_TOOLS:
-            reward = REWARD_EXPLORATION
+            return 0.10
         elif tool_name in INVESTIGATION_TOOLS:
-            reward = REWARD_INVESTIGATION
+            return 0.20
         elif tool_name in ACTION_TOOLS:
-            reward = REWARD_ACTION
-        else:
-            reward = 0.10
-
-        # Small urgency penalty as steps run out
-        task = TASKS.get(self._task_id, TASKS[1])
-        steps_used_ratio = self._state.step_count / task["max_steps"]
-        if steps_used_ratio > 0.8:
-            reward -= 0.05  # running out of time
-        elif steps_used_ratio > 0.6:
-            reward -= 0.02  # getting there
-
-        return round(reward, 3)
+            return 0.30
+        return 0.10
 
     def _steps_remaining(self) -> int:
         task = TASKS.get(self._task_id, TASKS[1])
@@ -144,9 +126,8 @@ class DataopsEnvironment(Environment):
             tool_name="reset",
             available_tools=list(TOOL_DESCRIPTIONS.keys()),
             task_prompt=task["prompt"],
-            steps_remaining=task["max_steps"],
             done=False,
-            reward=0.0,
+            reward=0.05,
             metadata={
                 "task_id": self._task_id,
                 "task_name": task["name"],
@@ -178,9 +159,8 @@ class DataopsEnvironment(Environment):
                 result={"message": "Maximum steps reached. Episode ending.", "grade": grade_result},
                 error=None,
                 tool_name="system",
-                steps_remaining=0,
                 done=True,
-                reward=grade_result["score"],
+                reward=_clamp_score(grade_result["score"]),
                 metadata={"reason": "max_steps_exceeded", "grade_details": grade_result},
             )
 
@@ -191,9 +171,8 @@ class DataopsEnvironment(Environment):
                 result=None,
                 error=f"Unknown tool: '{action.tool_name}'. Available tools: {list(TOOLS.keys())}",
                 tool_name=action.tool_name,
-                steps_remaining=remaining,
                 done=False,
-                reward=REWARD_UNKNOWN_TOOL,
+                reward=-0.2,
                 metadata={"step": self._state.step_count},
             )
 
@@ -210,24 +189,22 @@ class DataopsEnvironment(Environment):
                     result={"submission": result, "grade": grade_result},
                     error=None,
                     tool_name=action.tool_name,
-                    steps_remaining=remaining,
-                    done=True,
-                    reward=grade_result["score"],
+                        done=True,
+                    reward=_clamp_score(grade_result["score"]),
                     metadata={
                         "step": self._state.step_count,
                         "grade_details": grade_result,
                     },
                 )
 
-            reward = self._compute_step_reward(action.tool_name, action.arguments, success=True)
+            reward = self._compute_step_reward(action.tool_name, action.arguments)
             return DataOpsObservation(
                 result=result,
                 error=None,
                 tool_name=action.tool_name,
-                steps_remaining=remaining,
                 done=False,
                 reward=reward,
-                metadata={"step": self._state.step_count, "reward_type": "success"},
+                metadata={"step": self._state.step_count},
             )
 
         except (ValueError, TypeError, KeyError) as e:
@@ -235,20 +212,18 @@ class DataopsEnvironment(Environment):
                 result=None,
                 error=str(e),
                 tool_name=action.tool_name,
-                steps_remaining=remaining,
                 done=False,
-                reward=REWARD_ERROR,
-                metadata={"step": self._state.step_count, "reward_type": "tool_error"},
+                reward=-0.15,
+                metadata={"step": self._state.step_count},
             )
         except Exception as e:
             return DataOpsObservation(
                 result=None,
                 error=f"Internal error: {str(e)}",
                 tool_name=action.tool_name,
-                steps_remaining=remaining,
                 done=False,
-                reward=REWARD_INTERNAL_ERROR,
-                metadata={"step": self._state.step_count, "reward_type": "internal_error"},
+                reward=-0.25,
+                metadata={"step": self._state.step_count},
             )
 
     @property

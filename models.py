@@ -32,9 +32,6 @@ class DataOpsObservation(Observation):
     task_prompt: Optional[str] = Field(
         default=None, description="Task description (returned on reset)"
     )
-    steps_remaining: Optional[int] = Field(
-        default=None, description="Number of steps remaining before episode ends"
-    )
 
 
 class DataOpsState(State):

@@ -200,7 +200,9 @@ async def run_task(client: OpenAI, env, task_id: int, task_name: str, max_steps:
             result = await env.step(action)
 
             obs = result.observation
-            reward = result.reward or 0.0
+            raw_reward = result.reward if result.reward is not None else 0.01
+            # Clamp each step reward strictly between 0 and 1
+            reward = max(0.01, min(0.99, raw_reward))
             done = result.done
             error = obs.error
 
@@ -223,14 +225,17 @@ async def run_task(client: OpenAI, env, task_id: int, task_name: str, max_steps:
                     score = reward
                 break
 
-        score = min(max(score, 0.0), 1.0)
+        # Clamp score strictly between 0 and 1 (never exactly 0.0 or 1.0)
+        score = max(0.01, min(0.99, score))
         success = score > 0.1
 
     except Exception as e:
         print(f"[DEBUG] Task {task_name} error: {e}", flush=True)
-        score = 0.0
+        score = 0.01  # never exactly 0.0
 
     finally:
+        # Final safety clamp — scores MUST be strictly (0, 1)
+        score = max(0.01, min(0.99, score))
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
     return score
